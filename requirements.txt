@@ -1,0 +1,16 @@
+# Core dependencies
+pymongo>=4.6.0
+click>=8.1.0
+google-generativeai>=0.8.0
+google-genai>=1.0.0  # For Imagen 3 image generation
+pydantic>=2.5.0
+sympy>=1.12
+python-dotenv>=1.0.0
+tenacity>=8.2.0
+rich>=13.7.0
+
+# Development dependencies
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+black>=24.0.0
+ruff>=0.1.0
