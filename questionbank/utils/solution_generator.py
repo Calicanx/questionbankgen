@@ -29,6 +29,9 @@ try:
     SYMPY_AVAILABLE = True
 except ImportError:
     SYMPY_AVAILABLE = False
+    # Define placeholders for type hints when SymPy not available
+    Symbol = Any
+    SympifyError = Exception
 
 logger = logging.getLogger(__name__)
 

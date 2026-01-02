@@ -26,6 +26,12 @@ from questionbank.utils.solution_generator import (
     solution_to_dict,
 )
 
+# Import comprehensive answer verifier
+from questionbank.validation.comprehensive_verifier import (
+    verify_and_fix_question,
+    ComprehensiveAnswerVerifier,
+)
+
 logger = logging.getLogger(__name__)
 
 # Base URL for serving generated images (set this based on your deployment)
@@ -120,6 +126,21 @@ class QuestionGenerator:
 
                 # Generate step-by-step solution for the generated question
                 generated_json = self._add_solution_steps(generated_json)
+
+                # Verify and fix answers using comprehensive verifier
+                generated_json, answer_result = verify_and_fix_question(
+                    generated_json, use_ai=True
+                )
+
+                if not answer_result.is_valid:
+                    logger.warning(f"Answer verification issues: {answer_result.error_message}")
+                    # Add to validation feedback for retry if fixes failed
+                    if answer_result.error_message:
+                        validation_feedback.append(f"Answer error: {answer_result.error_message}")
+                        continue
+                else:
+                    if answer_result.details.get("fixes_attempted"):
+                        logger.info("Answers were auto-corrected")
 
                 # Optionally save to database
                 if save_to_db:
@@ -1245,6 +1266,20 @@ STYLE:
                 generated_json = self._generate_hints_if_missing(
                     generated_json, source_question
                 )
+
+                # Verify and fix answers using comprehensive verifier
+                generated_json, answer_result = verify_and_fix_question(
+                    generated_json, use_ai=True
+                )
+
+                if not answer_result.is_valid:
+                    logger.warning(f"Answer verification issues: {answer_result.error_message}")
+                    if answer_result.error_message:
+                        validation_feedback.append(f"Answer error: {answer_result.error_message}")
+                        continue
+                else:
+                    if answer_result.details.get("fixes_attempted"):
+                        logger.info("Answers were auto-corrected")
 
                 if save_to_db:
                     self._save_generated_question(
