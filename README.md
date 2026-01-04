@@ -1,83 +1,263 @@
-# QuestionBank AI Generator
+# QuestionBank - AI Question Generator
 
-This project automates the generation of educational questions using Google's Gemini AI. It scrapes existing questions, stores them in MongoDB, and generates new variations with preserved or AI-generated images.
+A system for generating educational question variations using AI, with support for Khan Academy Perseus format questions.
 
 ## Features
 
-- **AI Question Generation**: Creates new variations of math questions using Gemini 2.0.
-- **Image Handling**: Automatically downloads and serves images locally (fixing "Access Denied" errors).
-- **Widget Support**: Supports various Khan Academy widgets (numeric-input, radio, dropdown, etc.).
-- **MongoDB Integration**: Stores source and generated questions in MongoDB (Atlas or local).
+- **Question Generation**: Creates new question variations from source questions using Gemini AI
+- **Image Generation**: Generates new images for questions (diagrams, graphs, place value blocks)
+- **Step-by-Step Solutions**: Generates solutions using SymPy symbolic math (Photomath approach)
+- **Hint Generation**: AI-generated hints for questions without source hints
+- **LaTeX Rendering**: Full KaTeX support including chemistry formulas (mhchem)
 
-## Prerequisites
+## Project Structure
 
-- Python 3.10+
-- Node.js 18+
-- MongoDB Database (Atlas or local)
-- Google Gemini API Key
+```
+questionbank/
+├── frontend/                    # React + Vite frontend
+│   ├── src/
+│   │   └── App.tsx             # Main React app with question comparison UI
+│   └── package.json
+├── questionbank/                # Python backend
+│   ├── core/
+│   │   ├── generator.py        # Main question generator (LLM + validation)
+│   │   └── prompt_builder.py   # Prompt templates for AI generation
+│   ├── intelligence/
+│   │   ├── image_generator.py  # AI image generation using Gemini
+│   │   ├── constraint_extractor.py
+│   │   ├── coherence_validator.py
+│   │   └── smart_generator.py
+│   ├── utils/
+│   │   ├── solution_generator.py  # SymPy-based step-by-step solver
+│   │   ├── math_visualizer.py     # Matplotlib graph generation
+│   │   ├── image_generator.py     # Programmatic image generation
+│   │   └── khan_colors.py         # Khan Academy color schemes
+│   ├── validation/
+│   │   ├── pipeline.py         # Validation orchestration
+│   │   ├── schema_validator.py # Perseus JSON schema validation
+│   │   ├── latex_validator.py  # LaTeX syntax validation
+│   │   └── answer_verifier.py  # Mathematical answer verification
+│   ├── mongodb/
+│   │   ├── connection.py       # MongoDB Atlas connection
+│   │   └── repository.py       # Database operations
+│   └── llm/
+│       └── gemini_client.py    # Google Gemini API client
+├── server.py                   # FastAPI server
+├── .env.example               # Environment variables template
+└── requirements.txt           # Python dependencies
+```
 
 ## Setup
 
-1.  **Clone the repository** (if you haven't already).
+### Prerequisites
 
-2.  **Environment Setup**:
-    - Copy `.env.example` to `.env`:
-      ```bash
-      cp .env.example .env
-      ```
-    - Update `.env` with your `MONGODB_URI`, `MONGODB_DB_NAME`, and `GEMINI_API_KEY`.
+- Python 3.10+
+- Node.js 18+
+- MongoDB Atlas account (or local MongoDB)
+- Google Gemini API key
 
-3.  **Install Backend Dependencies**:
-    ```bash
-    python3 -m venv .venv
-    source .venv/bin/activate
-    pip install -r requirements.txt
-    ```
+### Backend Setup
 
-4.  **Install Frontend Dependencies**:
-    ```bash
-    cd frontend
-    npm install
-    cd ..
-    ```
+```bash
+# Clone and navigate to project
+cd questionbank
+
+# Create virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Copy and configure environment variables
+cp .env.example .env
+# Edit .env with your API keys
+```
+
+### Frontend Setup
+
+```bash
+cd frontend
+npm install
+```
+
+### Environment Variables
+
+Create a `.env` file with:
+
+```env
+# MongoDB
+MONGODB_URI=mongodb+srv://user:password@cluster.mongodb.net/ai_tutor
+MONGODB_DB_NAME=ai_tutor
+
+# Google Gemini
+GOOGLE_API_KEY=your_gemini_api_key
+# or
+GEMINI_API_KEY=your_gemini_api_key
+```
 
 ## Running the Application
 
-1.  **Start the Backend Server**:
-    This server handles API requests and serves generated images.
-    ```bash
-    python server.py
-    ```
-    - API: `http://localhost:8001/api`
-    - Images: `http://localhost:8001/static/generated_images/`
+### Start Backend Server
 
-2.  **Start the Frontend**:
-    In a new terminal:
-    ```bash
-    cd frontend
-    npm run dev
-    ```
-    - Open `http://localhost:5174` in your browser.
-
-## Generating Questions
-
-You can generate questions using the CLI or verify all widget types.
-
-**Generate random questions:**
 ```bash
-source .venv/bin/activate
-python -m questionbank.cli generate --random --count 5
+# From project root
+python server.py
+# Server runs at http://localhost:8001
 ```
 
-**Verify/Generate for ALL widget types:**
+### Start Frontend
+
 ```bash
-source .venv/bin/activate
-python generate_all_types.py
+cd frontend
+npm run dev
+# Frontend runs at http://localhost:5173 (or next available port)
 ```
 
-## Troubleshooting Images
+### Access the Application
 
-If images are not loading:
-1. Ensure the **backend server** is running (`python server.py`).
-2. Check `questionbank/generated_images/` to see if files are being downloaded.
-3. Check the browser console for specific errors.
+Open http://localhost:5173 in your browser to see:
+- Side-by-side comparison of original and AI-generated questions
+- Expandable hints section for both questions
+- Step-by-step solutions for generated math questions
+- Images (both original and AI-generated)
+
+## API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/health` | GET | Health check |
+| `/api/generated` | GET | Get all generated questions |
+| `/api/generate` | POST | Generate a new question variation |
+
+### Generate Question
+
+```bash
+curl -X POST http://localhost:8001/api/generate \
+  -H "Content-Type: application/json" \
+  -d '{"source_id": "source_question_id"}'
+```
+
+## Key Components
+
+### 1. Question Generator (`questionbank/core/generator.py`)
+
+Main orchestrator that:
+- Calls Gemini to generate question variations
+- Validates output against Perseus schema
+- Generates new images when content changes
+- Adds solution steps using SymPy
+- Generates hints if source has none
+
+### 2. Solution Generator (`questionbank/utils/solution_generator.py`)
+
+Uses SymPy for symbolic math to generate step-by-step solutions:
+- Extracts equations from question content
+- Solves algebraically with intermediate steps
+- Supports linear equations, proportions, fractions
+
+### 3. Image Generator (`questionbank/intelligence/image_generator.py`)
+
+Generates images using Gemini AI:
+- Context-aware image generation
+- Supports geometric diagrams, graphs, illustrations
+- Saves to `questionbank/generated_images/`
+
+### 4. Frontend (`frontend/src/App.tsx`)
+
+React application with:
+- Side-by-side question comparison
+- KaTeX math rendering with mhchem for chemistry
+- `processHintContent()` - Fixes Khan Academy's nested align blocks
+- Widget rendering (images, radio buttons, numeric inputs)
+
+## Recent Improvements
+
+### LaTeX Rendering Fixes
+
+The `processHintContent()` function handles Khan Academy's malformed LaTeX:
+- Converts nested `\begin{align}` to `\begin{aligned}`
+- Adds proper `$$` display math delimiters with newlines
+- Enables remarkMath to detect display math blocks
+
+### Hint Generation
+
+Questions without source hints now get AI-generated hints:
+- 2-3 progressive hints per question
+- Context-aware based on question content and correct answer
+
+### Chemistry Support
+
+Added mhchem extension for chemistry formulas:
+- `\ce{NaCl}` - Chemical formulas
+- `\pu{g/mol}` - Units
+- `\cancel{}` - Cancellation marks
+
+## Testing
+
+### Verify Backend
+
+```bash
+# Health check
+curl http://localhost:8001/api/health
+
+# Get generated questions
+curl http://localhost:8001/api/generated | python -m json.tool
+```
+
+### Verify Frontend
+
+1. Open http://localhost:5173
+2. Scroll through questions to see:
+   - Images rendering correctly
+   - Hints expanding with proper LaTeX
+   - Solutions showing for math questions
+
+## Troubleshooting
+
+### LaTeX Not Rendering
+
+- Check browser console for KaTeX errors
+- Ensure `processHintContent()` is being called
+- Verify `$$` delimiters have blank lines around them
+
+### Images Not Loading
+
+- Check server logs for 404 errors
+- Verify `generated_images` directory exists
+- Check image URLs in API response
+
+### Hints Missing
+
+- For source questions: Check if source has `hints` array
+- For generated: Ensure `_generate_hints_if_missing()` is called
+- Check server logs for "Generated X hints" messages
+
+## Architecture Notes
+
+### Why SymPy for Solutions?
+
+Instead of asking AI to generate solutions (which can hallucinate), we use SymPy for accurate symbolic math solving. This follows the Photomath approach - parse the equation, solve it algebraically, and show each step.
+
+### Why Programmatic Image Generation?
+
+AI-generated graphs/diagrams are often mathematically inaccurate. We use:
+- Matplotlib for function plots and coordinate graphs
+- Custom generators for place value blocks, fractions
+- Gemini only for contextual images (photos, illustrations)
+
+### Khan Academy Widget Types
+
+Supported widgets:
+- `radio` - Multiple choice
+- `numeric-input` - Number answers
+- `image` - Images with `backgroundImage.url`
+- `definition` - Tooltips
+- `expression` - Math expressions
+
+## Contributing
+
+1. Keep code in appropriate module directories
+2. Add logging with the `logger` module
+3. Handle errors gracefully (don't break generation if hints fail)
+4. Test changes with multiple question types (math, chemistry, reading)
