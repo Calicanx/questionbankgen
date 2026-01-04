@@ -41,6 +41,81 @@ GENERATED_IMAGES_BASE_URL = os.getenv(
 )
 
 
+
+def _download_and_convert_image(url: str) -> Optional[str]:
+    """Download a remote image and save it locally.
+    
+    Args:
+        url: Remote image URL (can be web+graphie:// or https://)
+        
+    Returns:
+        Local file path if successful, None otherwise
+    """
+    import requests
+    import uuid
+    
+    try:
+        # Convert web+graphie:// URLs to https://
+        download_url = url
+        if url.startswith("web+graphie://"):
+            download_url = url.replace("web+graphie://", "https://") + ".svg"
+        
+        # Download with browser-like headers
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+            'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+            'Referer': 'https://www.khanacademy.org/',
+        }
+        
+        response = requests.get(download_url, headers=headers, timeout=15)
+        if response.status_code != 200:
+            logger.warning(f"Failed to download image: {download_url[:60]}... (status {response.status_code})")
+            return None
+        
+        # Determine file type
+        content_type = response.headers.get('Content-Type', '')
+        is_svg = 'svg' in content_type or download_url.endswith('.svg')
+        
+        # Generate unique filename
+        file_ext = '.png' if is_svg else '.jpg'
+        filename = f"downloaded_{uuid.uuid4().hex[:12]}{file_ext}"
+        save_path = os.path.join(GENERATED_IMAGES_DIR, filename)
+        
+        # Ensure dir exists
+        os.makedirs(GENERATED_IMAGES_DIR, exist_ok=True)
+        
+        if is_svg:
+            # Try to convert SVG to PNG using Wand (ImageMagick)
+            try:
+                from wand.image import Image as WandImage
+                with WandImage(blob=response.content, format='svg') as img:
+                    img.format = 'png'
+                    img.background_color = 'white'
+                    img.alpha_channel = 'remove'
+                    with open(save_path, 'wb') as f:
+                        img.save(file=f)
+                logger.info(f"Converted SVG to PNG: {save_path}")
+            except Exception as e:
+                logger.warning(f"SVG conversion failed: {e}, saving as SVG")
+                # Fallback: save SVG directly
+                file_ext = '.svg'
+                filename = f"downloaded_{uuid.uuid4().hex[:12]}{file_ext}"
+                save_path = os.path.join(GENERATED_IMAGES_DIR, filename)
+                with open(save_path, 'wb') as f:
+                    f.write(response.content)
+        else:
+            # Save image directly
+            with open(save_path, 'wb') as f:
+                f.write(response.content)
+            logger.info(f"Downloaded image: {save_path}")
+        
+        return save_path
+        
+    except Exception as e:
+        logger.error(f"Error downloading image from {url[:60]}...: {e}")
+        return None
+
+
 class QuestionGenerator:
     """Generates new questions using LLM based on source questions.
 
@@ -286,21 +361,53 @@ class QuestionGenerator:
             while "\n\n\n" in gen_content:
                 gen_content = gen_content.replace("\n\n\n", "\n\n")
 
-            # For now, copy source images (use generate_with_new_images for AI-generated images)
+            # Download source images and replace with local URLs
+            local_images_dict = {}
             for alt, url in source_images:
-                markdown_img = f"![{alt}]({url})"
-                if url not in gen_content:
-                    widget_match = re.search(r'\[\[☃[^\]]+\]\]', gen_content)
-                    if widget_match:
-                        insert_pos = widget_match.start()
-                        gen_content = (
-                            gen_content[:insert_pos].rstrip() +
-                            "\n\n" + markdown_img + "\n\n" +
-                            gen_content[insert_pos:]
-                        )
-                    else:
-                        gen_content = gen_content.rstrip() + "\n\n" + markdown_img
-                    logger.info(f"Added source image: {url[:60]}...")
+                # Download the image locally
+                local_path = _download_and_convert_image(url)
+                
+                if local_path:
+                    # Create local server URL
+                    filename = os.path.basename(local_path)
+                    local_url = f"{GENERATED_IMAGES_BASE_URL}/{filename}"
+                    
+                    # Add to images dict
+                    local_images_dict[local_url] = {"width": 400, "height": 300}
+                    
+                    # Insert image markdown into content
+                    markdown_img = f"![{alt}]({local_url})"
+                    if local_url not in gen_content:
+                        widget_match = re.search(r'\[\[☃[^\]]+\]\]', gen_content)
+                        if widget_match:
+                            insert_pos = widget_match.start()
+                            gen_content = (
+                                gen_content[:insert_pos].rstrip() +
+                                "\n\n" + markdown_img + "\n\n" +
+                                gen_content[insert_pos:]
+                            )
+                        else:
+                            gen_content = gen_content.rstrip() + "\n\n" + markdown_img
+                    logger.info(f"Downloaded and replaced image: {url[:60]}... -> {local_url}")
+                else:
+                    # Fallback: use original URL (will still fail, but at least we tried)
+                    logger.warning(f"Failed to download image, keeping original URL: {url[:60]}...")
+                    markdown_img = f"![{alt}]({url})"
+                    if url not in gen_content:
+                        widget_match = re.search(r'\[\[☃[^\]]+\]\]', gen_content)
+                        if widget_match:
+                            insert_pos = widget_match.start()
+                            gen_content = (
+                                gen_content[:insert_pos].rstrip() +
+                                "\n\n" + markdown_img + "\n\n" +
+                                gen_content[insert_pos:]
+                            )
+                        else:
+                            gen_content = gen_content.rstrip() + "\n\n" + markdown_img
+
+            # Update images dict with local URLs
+            if local_images_dict:
+                gen_question["images"] = local_images_dict
 
             gen_question["content"] = gen_content.strip()
 
@@ -320,8 +427,7 @@ class QuestionGenerator:
             if w.get("type") == "image"
         ]
 
-        # Copy backgroundImage from source to generated image widgets
-        # Match by position if IDs don't match
+        # Download and replace backgroundImage URLs from source to generated image widgets
         for i, (gen_wid, gen_widget) in enumerate(gen_image_widgets):
             # First try exact ID match
             matched_source = None
@@ -333,11 +439,38 @@ class QuestionGenerator:
 
             if matched_source:
                 source_bg = matched_source.get("options", {}).get("backgroundImage")
-                if source_bg:
-                    if "options" not in gen_widgets[gen_wid]:
-                        gen_widgets[gen_wid]["options"] = {}
-                    gen_widgets[gen_wid]["options"]["backgroundImage"] = copy.deepcopy(source_bg)
-                    logger.info(f"Copied backgroundImage to {gen_wid}")
+                if source_bg and isinstance(source_bg, dict):
+                    source_url = source_bg.get("url", "")
+                    
+                    # Download the image if it's a remote URL
+                    if source_url and (source_url.startswith("web+graphie://") or source_url.startswith("https://")):
+                        local_path = _download_and_convert_image(source_url)
+                        
+                        if local_path:
+                            # Create local server URL
+                            filename = os.path.basename(local_path)
+                            local_url = f"{GENERATED_IMAGES_BASE_URL}/{filename}"
+                            
+                            # Update widget with local URL
+                            if "options" not in gen_widgets[gen_wid]:
+                                gen_widgets[gen_wid]["options"] = {}
+                            gen_widgets[gen_wid]["options"]["backgroundImage"] = {
+                                "url": local_url,
+                                "width": source_bg.get("width", 400),
+                                "height": source_bg.get("height", 300)
+                            }
+                            logger.info(f"Downloaded and replaced backgroundImage for {gen_wid}: {source_url[:60]}... -> {local_url}")
+                        else:
+                            # Fallback: copy original URL
+                            if "options" not in gen_widgets[gen_wid]:
+                                gen_widgets[gen_wid]["options"] = {}
+                            gen_widgets[gen_wid]["options"]["backgroundImage"] = copy.deepcopy(source_bg)
+                            logger.warning(f"Failed to download backgroundImage, using original URL for {gen_wid}")
+                    else:
+                        # Non-remote URL, copy as-is
+                        if "options" not in gen_widgets[gen_wid]:
+                            gen_widgets[gen_wid]["options"] = {}
+                        gen_widgets[gen_wid]["options"]["backgroundImage"] = copy.deepcopy(source_bg)
 
         # For questions where AI generates image widgets but source has none (or vice versa),
         # we need to ensure image widgets have valid URLs or are removed

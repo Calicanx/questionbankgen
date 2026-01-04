@@ -9,6 +9,12 @@ python-dotenv>=1.0.0
 tenacity>=8.2.0
 rich>=13.7.0
 
+# Server dependencies
+fastapi>=0.100.0
+uvicorn>=0.20.0
+requests>=2.31.0
+Wand>=0.6.13
+
 # Development dependencies
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
