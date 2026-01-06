@@ -34,6 +34,8 @@ from questionbank.validation.comprehensive_verifier import (
 
 logger = logging.getLogger(__name__)
 
+from questionbank.utils.gcs import get_gcs_client
+
 # Base URL for serving generated images (set this based on your deployment)
 GENERATED_IMAGES_BASE_URL = os.getenv(
     "GENERATED_IMAGES_BASE_URL",
@@ -43,16 +45,17 @@ GENERATED_IMAGES_BASE_URL = os.getenv(
 
 
 def _download_and_convert_image(url: str) -> Optional[str]:
-    """Download a remote image and save it locally.
+    """Download a remote image and save it locally or to GCS.
     
     Args:
         url: Remote image URL (can be web+graphie:// or https://)
         
     Returns:
-        Local file path if successful, None otherwise
+        Public URL (GCS/Local) if successful, None otherwise
     """
     import requests
     import uuid
+    from questionbank.utils.gcs import get_gcs_client
     
     try:
         # Convert web+graphie:// URLs to https://
@@ -78,12 +81,12 @@ def _download_and_convert_image(url: str) -> Optional[str]:
         
         # Generate unique filename
         file_ext = '.png' if is_svg else '.jpg'
+        # Just filename, no path for GCS
         filename = f"downloaded_{uuid.uuid4().hex[:12]}{file_ext}"
-        save_path = os.path.join(GENERATED_IMAGES_DIR, filename)
         
-        # Ensure dir exists
-        os.makedirs(GENERATED_IMAGES_DIR, exist_ok=True)
-        
+        final_image_bytes = response.content
+        mime_type = "image/png" if is_svg else "image/jpeg"
+
         if is_svg:
             # Try to convert SVG to PNG using Wand (ImageMagick)
             try:
@@ -92,24 +95,36 @@ def _download_and_convert_image(url: str) -> Optional[str]:
                     img.format = 'png'
                     img.background_color = 'white'
                     img.alpha_channel = 'remove'
-                    with open(save_path, 'wb') as f:
-                        img.save(file=f)
-                logger.info(f"Converted SVG to PNG: {save_path}")
+                    final_image_bytes = img.make_blob()
+                    mime_type = "image/png"
+                logger.info(f"Converted SVG to PNG")
             except Exception as e:
                 logger.warning(f"SVG conversion failed: {e}, saving as SVG")
-                # Fallback: save SVG directly
                 file_ext = '.svg'
                 filename = f"downloaded_{uuid.uuid4().hex[:12]}{file_ext}"
-                save_path = os.path.join(GENERATED_IMAGES_DIR, filename)
-                with open(save_path, 'wb') as f:
-                    f.write(response.content)
-        else:
-            # Save image directly
-            with open(save_path, 'wb') as f:
-                f.write(response.content)
-            logger.info(f"Downloaded image: {save_path}")
+                mime_type = "image/svg+xml"
+
+        # Try to upload to GCS first
+        try:
+            gcs_client = get_gcs_client()
+            blob_name = f"generated_images/{filename}"
+            gcs_url = gcs_client.upload_bytes(final_image_bytes, blob_name, content_type=mime_type)
+            if gcs_url:
+                logger.info(f"Uploaded downloaded image to GCS: {gcs_url}")
+                return gcs_url
+        except Exception as e:
+            logger.error(f"Failed to upload to GCS: {e}")
+
+        # Fallback to local save
+        save_path = os.path.join(GENERATED_IMAGES_DIR, filename)
+        os.makedirs(GENERATED_IMAGES_DIR, exist_ok=True)
+            
+        with open(save_path, 'wb') as f:
+            f.write(final_image_bytes)
+        logger.info(f"Downloaded image locally: {save_path}")
         
-        return save_path
+        # Return local URL
+        return f"{GENERATED_IMAGES_BASE_URL}/{filename}"
         
     except Exception as e:
         logger.error(f"Error downloading image from {url[:60]}...: {e}")
@@ -179,6 +194,7 @@ class QuestionGenerator:
                 source_question,
                 system_prompt,
                 validation_feedback=validation_feedback if validation_feedback else None,
+                prompt=user_prompt,
             )
 
             if not generated_json:
@@ -361,23 +377,27 @@ class QuestionGenerator:
             while "\n\n\n" in gen_content:
                 gen_content = gen_content.replace("\n\n\n", "\n\n")
 
-            # Download source images and replace with local URLs
+            # Download source images and replace with local/GCS URLs
             local_images_dict = {}
             for alt, url in source_images:
-                # Download the image locally
-                local_path = _download_and_convert_image(url)
+                # Download the image locally or to GCS
+                result_path_or_url = _download_and_convert_image(url)
                 
-                if local_path:
-                    # Create local server URL
-                    filename = os.path.basename(local_path)
-                    local_url = f"{GENERATED_IMAGES_BASE_URL}/{filename}"
+                if result_path_or_url:
+                    # Check if it's already a URL (GCS)
+                    if result_path_or_url.startswith("http"):
+                        final_url = result_path_or_url
+                    else:
+                        # It's a local path, convert to local URL (fallback)
+                        filename = os.path.basename(result_path_or_url)
+                        final_url = f"{GENERATED_IMAGES_BASE_URL}/{filename}"
                     
                     # Add to images dict
-                    local_images_dict[local_url] = {"width": 400, "height": 300}
+                    local_images_dict[final_url] = {"width": 400, "height": 300}
                     
                     # Insert image markdown into content
-                    markdown_img = f"![{alt}]({local_url})"
-                    if local_url not in gen_content:
+                    markdown_img = f"![{alt}]({final_url})"
+                    if final_url not in gen_content:
                         widget_match = re.search(r'\[\[☃[^\]]+\]\]', gen_content)
                         if widget_match:
                             insert_pos = widget_match.start()
@@ -388,7 +408,7 @@ class QuestionGenerator:
                             )
                         else:
                             gen_content = gen_content.rstrip() + "\n\n" + markdown_img
-                    logger.info(f"Downloaded and replaced image: {url[:60]}... -> {local_url}")
+                    logger.info(f"Downloaded and replaced image: {url[:60]}... -> {final_url}")
                 else:
                     # Fallback: use original URL (will still fail, but at least we tried)
                     logger.warning(f"Failed to download image, keeping original URL: {url[:60]}...")
@@ -444,28 +464,31 @@ class QuestionGenerator:
                     
                     # Download the image if it's a remote URL
                     if source_url and (source_url.startswith("web+graphie://") or source_url.startswith("https://")):
-                        local_path = _download_and_convert_image(source_url)
+                        result_path_or_url = _download_and_convert_image(source_url)
                         
-                        if local_path:
-                            # Create local server URL
-                            filename = os.path.basename(local_path)
-                            local_url = f"{GENERATED_IMAGES_BASE_URL}/{filename}"
+                        if result_path_or_url:
+                            # Check if it's already a URL (GCS)
+                            if result_path_or_url.startswith("http"):
+                                final_url = result_path_or_url
+                            else:
+                                # It's a local path
+                                filename = os.path.basename(result_path_or_url)
+                                final_url = f"{GENERATED_IMAGES_BASE_URL}/{filename}"
                             
                             # Update widget with local URL
                             if "options" not in gen_widgets[gen_wid]:
                                 gen_widgets[gen_wid]["options"] = {}
                             gen_widgets[gen_wid]["options"]["backgroundImage"] = {
-                                "url": local_url,
+                                "url": final_url,
                                 "width": source_bg.get("width", 400),
                                 "height": source_bg.get("height", 300)
                             }
-                            logger.info(f"Downloaded and replaced backgroundImage for {gen_wid}: {source_url[:60]}... -> {local_url}")
+                            logger.info(f"Downloaded and replaced backgroundImage for {gen_wid}: {source_url[:60]}... -> {final_url}")
                         else:
                             # Fallback: copy original URL
                             if "options" not in gen_widgets[gen_wid]:
                                 gen_widgets[gen_wid]["options"] = {}
                             gen_widgets[gen_wid]["options"]["backgroundImage"] = copy.deepcopy(source_bg)
-                            logger.warning(f"Failed to download backgroundImage, using original URL for {gen_wid}")
                     else:
                         # Non-remote URL, copy as-is
                         if "options" not in gen_widgets[gen_wid]:
@@ -773,6 +796,7 @@ Rules:
             image_prompt = self._build_image_prompt_from_question(question_text, source_content)
             if image_prompt:
                 logger.info(f"Using Gemini for image generation: {image_prompt[:80]}...")
+                # This returns GCS URL or local path
                 image_path = self.gemini.generate_educational_image(
                     description=image_prompt,
                     context="educational math diagram for Khan Academy style question",
@@ -781,8 +805,34 @@ Rules:
 
         if image_path:
             # Get the URL for serving
-            filename = os.path.basename(image_path)
-            image_url = f"{GENERATED_IMAGES_BASE_URL}/{filename}"
+            image_url = None
+            
+            # If it's already a URL (from Gemini GCS upload), use it
+            if image_path.startswith("http"):
+                image_url = image_path
+            else:
+                # It's a local path (from programmatic generator), upload to GCS
+                try:
+                    import mimetypes
+                    from questionbank.utils.gcs import get_gcs_client
+                    from questionbank.config import config
+                    gcs_client = get_gcs_client()
+                    filename = os.path.basename(image_path)
+                    blob_name = f"generated_images/{filename}"
+                    
+                    mime_type, _ = mimetypes.guess_type(image_path)
+                    # Use upload_file since we have a file path
+                    image_url = gcs_client.upload_file(image_path, blob_name, content_type=mime_type)
+                    
+                    if image_url:
+                        logger.info(f"Uploaded programmatic image to GCS: {image_url}")
+                    else:
+                        # Upload failed, fallback to local URL
+                        image_url = f"{GENERATED_IMAGES_BASE_URL}/{filename}"
+                except Exception as e:
+                    logger.error(f"Failed to upload programmatic image to GCS: {e}")
+                    filename = os.path.basename(image_path)
+                    image_url = f"{GENERATED_IMAGES_BASE_URL}/{filename}"
 
             # Insert the new image into content
             new_markdown = f"![]({image_url})"
@@ -1303,10 +1353,14 @@ STYLE:
                     )
 
                 if image_path:
-                    # Get just the filename
-                    filename = os.path.basename(image_path)
-                    # Create URL for serving
-                    image_url = f"{GENERATED_IMAGES_BASE_URL}/{filename}"
+                    # If it's already a full URL (GCS), use it directly
+                    if image_path.startswith(("http://", "https://")):
+                         image_url = image_path
+                    else:
+                        # Get just the filename
+                        filename = os.path.basename(image_path)
+                        # Create URL for serving
+                        image_url = f"{GENERATED_IMAGES_BASE_URL}/{filename}"
 
                     # Update the widget with new image URL
                     gen_options["backgroundImage"] = {

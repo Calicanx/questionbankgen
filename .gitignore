@@ -53,3 +53,4 @@ frontend/dist/
 # Test outputs
 test_*.json
 *.output
+iqran*.json

@@ -3,6 +3,7 @@ pymongo>=4.6.0
 click>=8.1.0
 google-generativeai>=0.8.0
 google-genai>=1.0.0  # For Imagen 3 image generation
+google-cloud-storage>=2.14.0
 pydantic>=2.5.0
 sympy>=1.12
 python-dotenv>=1.0.0
@@ -14,6 +15,8 @@ fastapi>=0.100.0
 uvicorn>=0.20.0
 requests>=2.31.0
 Wand>=0.6.13
+svglib>=1.5.1
+reportlab>=4.0.0
 
 # Development dependencies
 pytest>=8.0.0

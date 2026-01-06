@@ -84,7 +84,7 @@ def build_generation_prompt(
     }
 
     variation_instructions = {
-        "number_change": "Change the numbers/values while keeping the same mathematical concept.",
+        "number_change": "Keep the same mathematical context/scenario, but CHANGE the numbers/values AND REPHRASE the narrative text slightly (use different sentence structure) so it reads differently while testing the exact same concept.",
         "context_change": "Change the real-world context/scenario while testing the same skill.",
         "structure_change": "Change the question structure while testing the same concept.",
         "difficulty_increase": "Make the question slightly harder while testing the same concept.",
@@ -111,6 +111,9 @@ Requirements:
 5. Keep hints helpful and relevant
 6. COPY all image URLs EXACTLY from the source (we cannot generate new images)
 7. If source has 'images' object, copy all URLs with their dimensions
+8. Context MUST be identical (same topic, difficulty, background)
+9. Content MUST be distinct (different numbers, different values, not just a copy)
+10. wording MUST be rephrased slightly (vary the sentence structure/phrasing while describing exact same scenario)
 """
 
     if validation_feedback:

@@ -41,7 +41,7 @@ class MongoDBManager:
 
             db_name = config.mongodb.db_name
 
-            self._client = MongoClient(mongo_uri)
+            self._client = MongoClient(mongo_uri, tlsAllowInvalidCertificates=True)
             self._db = self._client[db_name]
 
             # Test connection

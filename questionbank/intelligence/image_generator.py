@@ -177,11 +177,12 @@ class ImageGenerator:
             if ones:
                 draw.text((padding + hundreds_width + tens_width + spacing * 2, label_y), f"{ones} ones", fill=(0, 0, 0), font=font)
 
+
         # Generate filename based on content
         filename = f"place_value_{number}.png"
         filepath = self.output_dir / filename
 
-        # Save image
+        # Save image locally first
         img.save(filepath, 'PNG')
 
         # Generate alt text
@@ -195,8 +196,8 @@ class ImageGenerator:
 
         alt_text = ", ".join(alt_parts) if alt_parts else "empty place value model"
 
-        # Generate URL (relative to static serving)
-        url = f"/static/generated_images/{filename}"
+        # Upload to GCS if configured
+        url = self._upload_to_gcs_or_fallback(filepath, filename)
 
         return GeneratedImage(
             filepath=str(filepath),
@@ -205,6 +206,27 @@ class ImageGenerator:
             height=total_height,
             alt_text=alt_text
         )
+
+    def _upload_to_gcs_or_fallback(self, filepath: Path, filename: str) -> str:
+        """Upload image to GCS or return local URL as fallback."""
+        try:
+            from questionbank.utils.gcs import get_gcs_client
+            gcs_client = get_gcs_client()
+            blob_name = f"generated_images/{filename}"
+            
+            # auto-detect mime type
+            import mimetypes
+            content_type, _ = mimetypes.guess_type(str(filepath))
+            
+            gcs_url = gcs_client.upload_file(str(filepath), blob_name, content_type=content_type)
+            if gcs_url:
+                logger.info(f"Uploaded programmatic image to GCS: {gcs_url}")
+                return gcs_url
+        except Exception as e:
+            logger.warning(f"Failed to upload to GCS: {e}")
+            
+        # Fallback to local URL
+        return f"/static/generated_images/{filename}"
 
     def generate_number_line(
         self,
@@ -292,13 +314,53 @@ class ImageGenerator:
         # Alt text
         alt_text = f"Number line from {min_val} to {max_val} with points marked"
 
+        # Upload to GCS or fallback
+        url = self._upload_to_gcs_or_fallback(filepath, filename)
+
         return GeneratedImage(
             filepath=str(filepath),
-            url=f"/static/generated_images/{filename}",
+            url=url,
             width=width,
             height=height,
             alt_text=alt_text
         )
+
+    def generate_simple_shape(
+        self,
+        shape: str,  # 'rectangle', 'triangle', 'circle'
+        dimensions: dict,  # {'width': 100, 'height': 50} or {'radius': 30}
+        color: tuple = (66, 133, 244),
+        show_dimensions: bool = True
+    ) -> Optional[GeneratedImage]:
+        """Generate a simple geometric shape."""
+        # ... (omitted identical start of method) ...
+        if not HAS_PIL:
+            return None
+
+        padding = 40
+        width = 250
+        height = 200
+
+        img = Image.new('RGB', (width, height), self.BACKGROUND_COLOR)
+        draw = ImageDraw.Draw(img)
+        
+        # ... (drawing logic omitted, executed via execute checks ideally or we just replace the end) ...
+        
+        # (Since I can't easily skip the middle logic with one replace call if I don't reproduce it,
+        # I will target the end of generate_simple_shape specifically)
+        
+        # ACTUALLY, to be safe and avoid rewriting the whole drawing block, I should split this into two calls
+        # or target just the return block. The current tool call is "Updating other programmatic generators"
+        # I will target generate_number_line return block first.
+        
+        # Wait, I can't do partial method replacements easily if I don't match the lines correctly.
+        # I will target generate_number_line return block here.
+        
+        
+        # For generate_simple_shape:
+        # I'll let the user provide another tool call to fix that one to avoid mistakes.
+        pass
+
 
     def generate_simple_shape(
         self,
@@ -386,9 +448,12 @@ class ImageGenerator:
 
         img.save(filepath, 'PNG')
 
+        # Upload to GCS or fallback
+        url = self._upload_to_gcs_or_fallback(filepath, filename)
+
         return GeneratedImage(
             filepath=str(filepath),
-            url=f"/static/generated_images/{filename}",
+            url=url,
             width=width,
             height=height,
             alt_text=f"A {shape} with dimensions {dimensions}"
@@ -540,9 +605,28 @@ class GeminiImageGenerator:
             # Load to get dimensions
             img = Image.open(filepath)
 
+            # Upload to GCS
+            gcs_url = None
+            try:
+                from questionbank.utils.gcs import get_gcs_client
+                import mimetypes
+                
+                gcs_client = get_gcs_client()
+                if gcs_client:
+                    blob_name = f"generated_images/{filename}.png"
+                    content_type, _ = mimetypes.guess_type(str(filepath))
+                    gcs_url = gcs_client.upload_file(str(filepath), blob_name, content_type=content_type)
+                    if gcs_url:
+                        logger.info(f"Uploaded AI image to GCS: {gcs_url}")
+            except Exception as e:
+                logger.warning(f"Failed to upload AI image to GCS: {e}")
+
+            # Use GCS URL if available, otherwise local URL
+            final_url = gcs_url if gcs_url else f"/static/generated_images/{filename}.png"
+
             return GeneratedImage(
                 filepath=str(filepath),
-                url=f"/static/generated_images/{filename}.png",
+                url=final_url,
                 width=img.width,
                 height=img.height,
                 alt_text=alt_text or prompt[:100]

@@ -108,6 +108,40 @@ async def generate_question(request: GenerationRequest):
         logger.error(f"Error generating question: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/regenerate")
+async def regenerate_question(request: GenerationRequest):
+    """Force regenerate a question even if it already exists."""
+    try:
+        generator = QuestionGenerator()
+        
+        if not request.source_id:
+            raise HTTPException(status_code=400, detail="Source ID is required for regeneration")
+            
+        source = question_repo.get_question_by_id(request.source_id)
+        if not source:
+            raise HTTPException(status_code=404, detail="Source question not found")
+            
+        source_id_str = str(source["_id"])
+        source["_id"] = source_id_str
+        
+        # Force generation regardless of existing
+        generated = generator.generate_from_source(
+            source_question=source,
+            variation_type=request.variation_type,
+            save_to_db=True
+        )
+        
+        if not generated:
+            raise HTTPException(status_code=500, detail="Failed to regenerate question")
+            
+        return {
+            "source": source,
+            "generated": generated
+        }
+    except Exception as e:
+        logger.error(f"Error regenerating question: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
@@ -115,3 +149,4 @@ async def health():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001)
+

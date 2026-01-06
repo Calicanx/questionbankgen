@@ -6,6 +6,8 @@ A system for generating educational question variations using AI, with support f
 
 - **Question Generation**: Creates new question variations from source questions using Gemini AI
 - **Image Generation**: Generates new images for questions (diagrams, graphs, place value blocks)
+- **Google Cloud Storage**: Automatic upload of generated images to GCS for persistence
+- **Smart Regeneration**: Re-generate questions with new numbers while strictly preserving educational context
 - **Step-by-Step Solutions**: Generates solutions using SymPy symbolic math (Photomath approach)
 - **Hint Generation**: AI-generated hints for questions without source hints
 - **LaTeX Rendering**: Full KaTeX support including chemistry formulas (mhchem)
@@ -55,6 +57,7 @@ questionbank/
 - Node.js 18+
 - MongoDB Atlas account (or local MongoDB)
 - Google Gemini API key
+- Google Cloud Service Account (for GCS access) with 'Storage Object Creator' role
 
 ### Backend Setup
 
@@ -94,6 +97,10 @@ MONGODB_DB_NAME=ai_tutor
 GOOGLE_API_KEY=your_gemini_api_key
 # or
 GEMINI_API_KEY=your_gemini_api_key
+
+# Google Cloud Storage
+GCS_BUCKET_NAME=your_gcs_bucket_name
+GOOGLE_APPLICATION_CREDENTIALS=path/to/your/service-account-key.json
 ```
 
 ## Running the Application
@@ -119,8 +126,10 @@ npm run dev
 Open http://localhost:5173 in your browser to see:
 - Side-by-side comparison of original and AI-generated questions
 - Expandable hints section for both questions
-- Step-by-step solutions for generated math questions
-- Images (both original and AI-generated)
+- Comparison of original vs generated questions
+- **Regenerate Button**: Click "Regenerate" to create a fresh variation with new numbers (context preserved)
+- Step-by-Step solutions for generated math questions
+- Images (hosted on GCS)
 
 ## API Endpoints
 
@@ -192,6 +201,18 @@ Added mhchem extension for chemistry formulas:
 - `\ce{NaCl}` - Chemical formulas
 - `\pu{g/mol}` - Units
 - `\cancel{}` - Cancellation marks
+
+### Google Cloud Storage Integration
+
+- **Automatic Uploads**: Generated images (AI & programmatic) are automatically uploaded to GCS.
+- **Fallback Mechanism**: If GCS upload fails (e.g., permissions), images fall back to local storage seamlessly.
+- **Public URLs**: Returns public GCS URLs for easy embedding.
+
+### Regenerate API & Features
+
+- **Strict Context Preservation**: The regeneration prompt relies on strict rules to keep the educational scenario identical while changing numbers.
+- **Smart Rephrasing**: The system rephrases narrative text slightly to avoid repetition while maintaining the exact logic.
+- **Frontend Integration**: "Regenerate" button added to the UI for instant variation generation.
 
 ## Testing
 

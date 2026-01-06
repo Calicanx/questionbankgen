@@ -40,12 +40,22 @@ class ValidationConfig(BaseModel):
     check_latex: bool = True
 
 
+
+class GCSConfig(BaseModel):
+    """Google Cloud Storage configuration."""
+
+    bucket_name: str = Field(default_factory=lambda: os.getenv("GCS_BUCKET_NAME", ""))
+    credentials: str = Field(default_factory=lambda: os.getenv("GOOGLE_APPLICATION_CREDENTIALS", ""))
+
+
 class Config(BaseModel):
     """Main configuration container."""
 
     mongodb: MongoDBConfig = Field(default_factory=MongoDBConfig)
     gemini: GeminiConfig = Field(default_factory=GeminiConfig)
     validation: ValidationConfig = Field(default_factory=ValidationConfig)
+    gcs: GCSConfig = Field(default_factory=GCSConfig)
+    gcs_credentials: str = Field(default_factory=lambda: os.getenv("GOOGLE_APPLICATION_CREDENTIALS", ""))
 
     def validate_required(self) -> list[str]:
         """Validate required configuration values are set."""
@@ -55,6 +65,10 @@ class Config(BaseModel):
             errors.append("MONGODB_URI is not set in environment")
         if not self.gemini.api_key:
             errors.append("GEMINI_API_KEY is not set in environment")
+        if not self.gcs.bucket_name:
+            errors.append("GCS_BUCKET_NAME is not set in environment")
+        if not self.gcs_credentials:
+            errors.append("GOOGLE_APPLICATION_CREDENTIALS is not set in environment")
 
         return errors
 

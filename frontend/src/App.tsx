@@ -443,7 +443,7 @@ const QuestionRenderer = ({ question, widgets }: { question: string; widgets: Re
                   {choice.content}
                 </ReactMarkdown>
               </div>
-{/* Correct answer indicator hidden for clean comparison */}
+              {/* Correct answer indicator hidden for clean comparison */}
             </div>
           ))}
         </div>
@@ -593,6 +593,31 @@ function App() {
     if (currentIndex < results.length - 1) setCurrentIndex(prev => prev + 1);
   };
 
+  const handleRegenerate = async () => {
+    if (!currentResult?.source?._id) return;
+    try {
+      setLoading(true);
+      const res = await axios.post(`${API_BASE}/regenerate`, {
+        source_id: currentResult.source._id,
+        variation_type: "number_change"
+      });
+      // Update the current result with new generated data
+      const newResults = [...results];
+      if (newResults[currentIndex]) {
+        newResults[currentIndex] = {
+          ...newResults[currentIndex],
+          generated: res.data.generated
+        };
+        setResults(newResults);
+      }
+    } catch (err) {
+      console.error("Regeneration failed:", err);
+      alert("Failed to regenerate question");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div style={styles.container}>
       <header style={styles.header}>
@@ -625,7 +650,7 @@ function App() {
             Next →
           </button>
           <button
-            style={{...styles.navButton, backgroundColor: '#2563eb', color: '#fff', border: 'none'}}
+            style={{ ...styles.navButton, backgroundColor: '#2563eb', color: '#fff', border: 'none' }}
             onClick={fetchResults}
           >
             Refresh
@@ -667,7 +692,26 @@ function App() {
               <span style={styles.cardTitleGenerated}>AI Generated</span>
               <span style={styles.badge}>{currentResult?.metadata?.llm_model || 'gemini-2.0-flash'}</span>
             </div>
-            <span style={styles.cardId}>GEN_{currentIndex}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={styles.cardId}>GEN_{currentIndex}</span>
+              <button
+                style={{
+                  padding: '4px 12px',
+                  backgroundColor: '#7c3aed',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                  opacity: loading ? 0.7 : 1,
+                }}
+                onClick={handleRegenerate}
+                disabled={loading}
+              >
+                {loading ? '...' : 'Regenerate'}
+              </button>
+            </div>
           </div>
           <div style={styles.cardContent}>
             {loading ? (

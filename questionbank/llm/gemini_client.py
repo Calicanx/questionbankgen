@@ -51,6 +51,8 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from questionbank.config import config
 
+from questionbank.utils.gcs import get_gcs_client
+
 logger = logging.getLogger(__name__)
 
 # Directory to store generated images
@@ -96,6 +98,9 @@ class GeminiClient:
 
         # Ensure generated images directory exists
         os.makedirs(GENERATED_IMAGES_DIR, exist_ok=True)
+        
+        # Initialize GCS client
+        self.gcs_client = get_gcs_client()
 
         logger.info(f"[GEMINI] Initialized with model: {self.model_name}")
         logger.info(f"[GEMINI] Image model: {self.image_model_name}")
@@ -108,7 +113,7 @@ class GeminiClient:
             save_path: Optional path to save the image. If not provided, auto-generates.
 
         Returns:
-            Path to the saved image file, or None if generation failed.
+            URL (GCS) or local path to the saved image file, or None if generation failed.
         """
         try:
             logger.info(f"[GEMINI] Generating image with prompt: {prompt[:100]}...")
@@ -126,7 +131,7 @@ class GeminiClient:
                 if hasattr(part, 'inline_data') and part.inline_data:
                     # Get image data
                     image_data = part.inline_data.data
-                    mime_type = part.inline_data.mime_type
+                    mime_type = part.inline_data.mime_type or "image/png"
 
                     # Determine file extension
                     ext = ".png"
@@ -135,21 +140,28 @@ class GeminiClient:
                     elif "webp" in mime_type:
                         ext = ".webp"
 
-                    # Generate save path if not provided
-                    if not save_path:
-                        filename = f"generated_{uuid.uuid4().hex[:8]}{ext}"
-                        save_path = os.path.join(GENERATED_IMAGES_DIR, filename)
-
-                    # Decode and save image
+                    # Decode image bytes
                     if isinstance(image_data, str):
                         image_bytes = base64.b64decode(image_data)
                     else:
                         image_bytes = image_data
 
+                    # Upload to GCS
+                    filename = f"generated_{uuid.uuid4().hex[:8]}{ext}"
+                    blob_name = f"generated_images/{filename}"
+                    
+                    gcs_url = self.gcs_client.upload_bytes(image_bytes, blob_name, content_type=mime_type)
+                    if gcs_url:
+                        return gcs_url
+
+                    # Fallback: Save locally if GCS upload fails or not configured
+                    if not save_path:
+                        save_path = os.path.join(GENERATED_IMAGES_DIR, filename)
+
                     with open(save_path, 'wb') as f:
                         f.write(image_bytes)
 
-                    logger.info(f"[GEMINI] Image saved to: {save_path}")
+                    logger.info(f"[GEMINI] Image saved locally to: {save_path}")
                     return save_path
 
             # If no inline_data, check for text response (might contain URL or error)
@@ -176,7 +188,7 @@ class GeminiClient:
             style: Visual style to use
 
         Returns:
-            Path to saved image, or None if failed.
+            URL/Path to saved image, or None if failed.
         """
         prompt = f"""Create a {style} for {context}.
 
@@ -210,7 +222,7 @@ Requirements:
             style_instructions: Instructions for matching the style
 
         Returns:
-            Path to saved image, or None if failed.
+            URL/Path to saved image, or None if failed.
         """
         try:
             logger.info(f"[GEMINI] Generating image from reference: {source_image_url[:60]}...")
@@ -329,19 +341,28 @@ Generate the new image now."""
             for part in response.candidates[0].content.parts:
                 if hasattr(part, 'inline_data') and part.inline_data:
                     image_data = part.inline_data.data
-                    mime_type = part.inline_data.mime_type
+                    mime_type = part.inline_data.mime_type or "image/png"
 
                     ext = ".png"
                     if "jpeg" in mime_type or "jpg" in mime_type:
                         ext = ".jpg"
 
-                    filename = f"generated_{uuid.uuid4().hex[:8]}{ext}"
-                    save_path = os.path.join(GENERATED_IMAGES_DIR, filename)
-
                     if isinstance(image_data, str):
                         image_bytes = base64.b64decode(image_data)
                     else:
                         image_bytes = image_data
+
+                    # Upload to GCS
+                    filename = f"generated_{uuid.uuid4().hex[:8]}{ext}"
+                    blob_name = f"generated_images/{filename}"
+                    
+                    gcs_url = self.gcs_client.upload_bytes(image_bytes, blob_name, content_type=mime_type)
+                    if gcs_url:
+                        return gcs_url
+                    
+                    # Fallback to local
+                    filename = f"generated_{uuid.uuid4().hex[:8]}{ext}"
+                    save_path = os.path.join(GENERATED_IMAGES_DIR, filename)
 
                     with open(save_path, 'wb') as f:
                         f.write(image_bytes)
@@ -353,6 +374,17 @@ Generate the new image now."""
             if hasattr(response.candidates[0].content.parts[0], 'image'):
                 img = response.candidates[0].content.parts[0].image
                 filename = f"generated_{uuid.uuid4().hex[:8]}.png"
+                img_byte_arr = BytesIO()
+                img.save(img_byte_arr, format='PNG')
+                image_bytes = img_byte_arr.getvalue()
+                
+                # Upload to GCS
+                blob_name = f"generated_images/{filename}"
+                gcs_url = self.gcs_client.upload_bytes(image_bytes, blob_name, content_type="image/png")
+                if gcs_url:
+                    return gcs_url
+
+                # Fallback to local
                 save_path = os.path.join(GENERATED_IMAGES_DIR, filename)
                 img.save(save_path)
                 logger.info(f"[GEMINI] Generated image saved: {save_path}")
@@ -404,11 +436,13 @@ Generate the new image now."""
         source_question: dict[str, Any],
         system_prompt: str,
         validation_feedback: Optional[list[str]] = None,
+        prompt: Optional[str] = None,
     ) -> Optional[dict[str, Any]]:
         """Generate a new question JSON from a source question."""
         try:
-            # Build the prompt
-            prompt = self._build_generation_prompt(source_question, validation_feedback)
+            # Build the prompt if not provided
+            if not prompt:
+                prompt = self._build_generation_prompt(source_question, validation_feedback)
 
             # Generate response
             response_text = self.generate(prompt, system_prompt)
@@ -442,8 +476,9 @@ Generate the new image now."""
 
 Generate a NEW question that:
 1. Tests the same skill/concept as the source question
-2. Uses DIFFERENT numbers, values, or context
-3. Has a mathematically/factually correct answer
+2. Uses DIFFERENT numbers, values, and MOST IMPORTANTLY:
+   - A COMPLETELY DIFFERENT REAL-WORLD content but relevant CONTEXT/SCENARIO to reference question
+3. Has a mathematically/factly correct answer
 4. Follows the EXACT same widget structure and types
 5. Maintains the same difficulty level
 
