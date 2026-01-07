@@ -169,6 +169,7 @@ class QuestionGenerator:
         source_question: dict[str, Any],
         variation_type: str = "number_change",
         save_to_db: bool = True,
+        generated_id: Optional[str] = None,
     ) -> Optional[dict[str, Any]]:
         """Generate a new question from a source question."""
         source_id = str(source_question.get("_id", "unknown"))
@@ -239,6 +240,7 @@ class QuestionGenerator:
                         source_id=source_id,
                         generated_json=generated_json,
                         attempt_count=attempt,
+                        generated_id=generated_id,
                     )
 
                 return generated_json
@@ -697,6 +699,7 @@ Rules:
         source_id: str,
         generated_json: dict[str, Any],
         attempt_count: int,
+        generated_id: Optional[str] = None,
     ) -> Optional[str]:
         """Save a generated question to the database."""
         metadata = {
@@ -706,11 +709,21 @@ Rules:
             "generated_at": datetime.utcnow(),
         }
 
-        inserted_id = question_repo.insert_generated_question(
-            source_question_id=source_id,
-            perseus_json=generated_json,
-            metadata=metadata,
-        )
+        if generated_id:
+            # Update existing record
+            success = question_repo.update_generated_question(
+                generated_id=generated_id,
+                perseus_json=generated_json,
+                metadata=metadata,
+            )
+            inserted_id = generated_id if success else None
+        else:
+            # Create new record
+            inserted_id = question_repo.insert_generated_question(
+                source_question_id=source_id,
+                perseus_json=generated_json,
+                metadata=metadata,
+            )
 
         if inserted_id:
             logger.info(f"Saved generated question: {inserted_id}")

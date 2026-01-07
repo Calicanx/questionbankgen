@@ -191,6 +191,58 @@ class QuestionRepository:
             logger.error(f"Error inserting generated question: {e}")
             return None
 
+    def update_generated_question(
+        self,
+        generated_id: str,
+        perseus_json: dict[str, Any],
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> bool:
+        """Update an existing generated question."""
+        try:
+            update_data = {
+                "perseus_json": perseus_json,
+                "metadata.generated_at": datetime.utcnow(),
+                "metadata.validation_status": metadata.get("validation_status", "valid") if metadata else "valid",
+                "metadata.attempt_count": metadata.get("attempt_count", 1) if metadata else 1,
+                "metadata.llm_model": metadata.get("llm_model", "gemini-2.0-flash") if metadata else "gemini-2.0-flash",
+                "widget_types": self._extract_widget_types(perseus_json),
+            }
+
+            result = self.generated.update_one(
+                {"_id": ObjectId(generated_id)},
+                {"$set": update_data}
+            )
+            return result.modified_count > 0
+
+        except Exception as e:
+            logger.error(f"Error updating generated question {generated_id}: {e}")
+            return False
+
+    def delete_generated_question(self, generated_id: str) -> bool:
+        """Delete a generated question by ID."""
+        try:
+            result = self.generated.delete_one({"_id": ObjectId(generated_id)})
+            return result.deleted_count > 0
+        except Exception as e:
+            logger.error(f"Error deleting generated question {generated_id}: {e}")
+            return False
+
+    def find_potential_duplicates(self, source_id: str, generated_id: Optional[str] = None) -> list[dict]:
+        """
+        Find other generated questions that share the same source ID.
+        Returns a list of duplicate documents (excluding the current one).
+        """
+        try:
+            query = {"source_question_id": ObjectId(source_id)}
+            if generated_id:
+                query["_id"] = {"$ne": ObjectId(generated_id)}
+                
+            duplicates = list(self.generated.find(query))
+            return duplicates
+        except Exception as e:
+            logger.error(f"Error finding duplicates for source {source_id}: {e}")
+            return []
+
     def _extract_widget_types(self, perseus_json: dict[str, Any]) -> list[str]:
         """Extract widget types from Perseus JSON."""
         widget_types = set()

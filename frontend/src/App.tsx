@@ -566,8 +566,18 @@ function App() {
   const [results, setResults] = useState<GeneratedResult[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [duplicateStatus, setDuplicateStatus] = useState<{ isDuplicate: boolean; score: number; reason: string } | null>(null);
 
   const currentResult = results[currentIndex];
+
+  useEffect(() => {
+    // Reset duplicate status when changing questions
+    setDuplicateStatus(null);
+    // Auto-check for duplicates when current result changes
+    if (currentResult) {
+      handleCheckDuplicate();
+    }
+  }, [currentIndex, results]); // Re-run when index changes or results update (e.g. after regeneration)
 
   useEffect(() => {
     fetchResults();
@@ -599,6 +609,7 @@ function App() {
       setLoading(true);
       const res = await axios.post(`${API_BASE}/regenerate`, {
         source_id: currentResult.source._id,
+        generated_id: currentResult.generated?._id || currentResult.id,
         variation_type: "number_change"
       });
       // Update the current result with new generated data
@@ -613,6 +624,51 @@ function App() {
     } catch (err) {
       console.error("Regeneration failed:", err);
       alert("Failed to regenerate question");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCheckDuplicate = async () => {
+    if (!currentResult?.source?._id || !currentResult?.generated) return;
+    try {
+      const res = await axios.post(`${API_BASE}/check-duplicate`, {
+        source_id: currentResult.source._id,
+        generated_id: currentResult.generated?._id || currentResult.id
+      });
+
+      setDuplicateStatus({
+        isDuplicate: res.data.is_duplicate,
+        score: res.data.confidence_score,
+        reason: res.data.reason
+      });
+    } catch (err) {
+      console.error("Duplicate check failed:", err);
+      // Silent fail for auto-check
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!currentResult?.id) return;
+    if (!confirm("Are you sure you want to delete this generated question? This action cannot be undone.")) return;
+
+    try {
+      setLoading(true);
+      await axios.delete(`${API_BASE}/generated/${currentResult.id}`);
+
+      // Remove from local list
+      const newResults = results.filter(r => r.id !== currentResult.id);
+      setResults(newResults);
+
+      // Adjust index if needed
+      if (currentIndex >= newResults.length) {
+        setCurrentIndex(Math.max(0, newResults.length - 1));
+      }
+      setDuplicateStatus(null);
+
+    } catch (err) {
+      console.error("Delete failed:", err);
+      alert("Failed to delete question");
     } finally {
       setLoading(false);
     }
@@ -659,6 +715,53 @@ function App() {
       </header>
 
       <main style={styles.main}>
+        {/* Duplicate Detection UI - Automated (Top of both boxes) */}
+        {duplicateStatus?.isDuplicate && (
+          <div style={{
+            gridColumn: '1 / -1',
+            marginBottom: '16px',
+            padding: '16px 20px',
+            backgroundColor: '#fef2f2',
+            border: '1px solid #fca5a5',
+            borderRadius: '8px',
+            display: 'flex',
+            gap: '16px',
+            alignItems: 'center',
+            boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
+          }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                <span style={{ fontSize: '15px', fontWeight: 600, color: '#b91c1c' }}>⚠️ Duplicate Detected</span>
+                <span style={{ fontSize: '13px', color: '#991b1b', backgroundColor: '#fee2e2', padding: '2px 8px', borderRadius: '4px' }}>
+                  {Math.round(duplicateStatus.score * 100)}% match
+                </span>
+              </div>
+              <div style={{ fontSize: '14px', color: '#7f1d1d' }}>
+                {duplicateStatus.reason}
+              </div>
+            </div>
+
+            <button
+              onClick={handleDelete}
+              disabled={loading}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: '#ef4444',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                fontSize: '14px',
+                fontWeight: 500,
+                cursor: 'pointer',
+                boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              🗑️ Delete Generated Question
+            </button>
+          </div>
+        )}
+
         {/* Original Question from MongoDB */}
         <div style={styles.card}>
           <div style={styles.cardHeader}>
@@ -713,6 +816,7 @@ function App() {
               </button>
             </div>
           </div>
+
           <div style={styles.cardContent}>
             {loading ? (
               <div style={styles.loading}>Loading questions...</div>
