@@ -28,17 +28,6 @@ interface Hint {
   replace?: boolean;
 }
 
-interface SolutionStep {
-  step: number;
-  content: string;
-  action: string;
-}
-
-interface Solution {
-  steps: SolutionStep[];
-  final_answer: string;
-}
-
 interface Question {
   _id: string;
   question: {
@@ -47,7 +36,6 @@ interface Question {
     images: Record<string, any>;
   };
   hints: Hint[];
-  solution?: Solution;
 }
 
 interface GeneratedResult {
@@ -520,47 +508,6 @@ const HintsSection = ({ hints }: { hints: Hint[] }) => {
 };
 
 // Solution Steps Component (for generated questions only)
-const SolutionSteps = ({ solution }: { solution?: Solution }) => {
-  if (!solution || !solution.steps || solution.steps.length === 0) return null;
-
-  return (
-    <div style={styles.solutionSection}>
-      <div style={styles.solutionHeader}>
-        <span>📝</span>
-        <span>Step-by-Step Solution</span>
-      </div>
-      {solution.steps.map((step, i) => (
-        <div key={i} style={styles.stepItem}>
-          <div style={styles.stepNumber}>{step.step}</div>
-          <div style={styles.stepContent}>
-            <div style={styles.stepAction}>{step.action}</div>
-            <div style={styles.stepMath}>
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm, remarkMath]}
-                rehypePlugins={[rehypeRaw, rehypeKatex]}
-              >
-                {step.content}
-              </ReactMarkdown>
-            </div>
-          </div>
-        </div>
-      ))}
-      {solution.final_answer && (
-        <div style={styles.finalAnswer}>
-          <div style={styles.finalAnswerLabel}>Final Answer</div>
-          <div style={styles.finalAnswerValue}>
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm, remarkMath]}
-              rehypePlugins={[rehypeRaw, rehypeKatex]}
-            >
-              {solution.final_answer}
-            </ReactMarkdown>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
 
 function App() {
   const [results, setResults] = useState<GeneratedResult[]>([]);
@@ -827,7 +774,6 @@ function App() {
                   widgets={currentResult.generated.question?.widgets || {}}
                 />
                 <HintsSection hints={currentResult.generated.hints || []} />
-                <SolutionSteps solution={currentResult.generated.solution} />
               </>
             ) : (
               <div style={styles.loading}>No data available</div>
