@@ -498,26 +498,24 @@ Generate the new image now."""
         }
 
         prompt = f"""Given this source question in Perseus v2.0 JSON format:
+            SOURCE QUESTION (FOR CONCEPT ONLY — DO NOT COPY):
 
-```json
-{json.dumps(perseus_json, indent=2)}
-```
+            ```json
+            {json.dumps(perseus_json, indent=2)}
+            ```
 
-Generate a NEW question that:
-1. Tests the same skill/concept as the source question
-2. Uses DIFFERENT numbers, values, and MOST IMPORTANTLY:
-   - A COMPLETELY DIFFERENT REAL-WORLD content but relevant CONTEXT/SCENARIO to reference question
-3. Has a mathematically/factly correct answer
-4. Follows the EXACT same widget structure and types
-5. Maintains the same difficulty level
+            Generate a NEW question that:
+            1. Tests the same skill/concept as the source question
+            2. Uses DIFFERENT numbers, values, and MOST IMPORTANTLY:
+            - A COMPLETELY DIFFERENT REAL-WORLD content but relevant CONTEXT/SCENARIO to reference question
+            3. Maintains the same difficulty level
+            4. Ensure the words don't match at 60%
 
-IMPORTANT:
-- Return ONLY valid JSON (no markdown code blocks)
-- Use the exact same widget IDs and structure
-- Ensure all answers are correct
-- Keep LaTeX syntax compatible with KaTeX
-- Use Khan Academy color commands (\\blueD{{}}, \\redD{{}}, etc.) as in the source
-"""
+            IMPORTANT:
+            - Return ONLY valid JSON (no markdown code blocks)
+            - Keep LaTeX syntax compatible with KaTeX
+            - Use Khan Academy color commands (\\blueD{{}}, \\redD{{}}, etc.) as in the source
+            """
 
         if validation_feedback:
             prompt += "\n\nPREVIOUS VALIDATION ERRORS (fix these):\n"
